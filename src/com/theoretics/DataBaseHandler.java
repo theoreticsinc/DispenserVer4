@@ -33,6 +33,7 @@ import java.sql.Statement;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.concurrent.Executors;
+import java.util.logging.Level;
 import javax.imageio.ImageIO;
 import javax.swing.JFrame;
 import javax.swing.JPanel;
@@ -93,7 +94,7 @@ public class DataBaseHandler extends Thread {
     public void connect() {
         try {
             Class.forName("com.mysql.jdbc.Driver");
-            Connection con = DriverManager.getConnection("jdbc:mysql://localhost", "root", "sa");
+            Connection con = DriverManager.getConnection("jdbc:mysql://localhost", "root", "");
             st = (Statement) con.createStatement();
             String str = "SELECT * FROM carpark.entrance";
             //st.execute(str);
@@ -497,7 +498,7 @@ public class DataBaseHandler extends Thread {
             ex.printStackTrace();
             //System.exit(1);
         }
-        DriverManager.setLoginTimeout(1);
+        DriverManager.setLoginTimeout(1000);
         //Connection connection=null;
         if (mainorder == false) {
             try {
@@ -592,21 +593,48 @@ public class DataBaseHandler extends Thread {
             return false;
         }
     }
+    
+    public Date getServerDateTime() {
+        Date TimeIn = null;
+        try {
 
-    public String getServerTime() throws Exception {
-        String TimeIn = "";
+            connection = getConnection(false);
+            if (null != connection) {
+                ResultSet rs = selectDatabyFields("SELECT NOW() as today");
+                // iterate through the java resultset
 
-        connection = getConnection(false);
-        if (null != connection) {
-            ResultSet rs = selectDatabyFields("SELECT NOW() as today");
-            // iterate through the java resultset
-
-            while (rs.next()) {
-                TimeIn = rs.getString("today");
-                //System.out.println("TIME IN:" + TimeIn);
+                while (rs.next()) {
+                    TimeIn = rs.getDate("today");
+                    //System.out.println("TIME IN:" + TimeIn);
+                }
+                st.close();
+                connection.close();
             }
-            st.close();
-            connection.close();
+        } catch (SQLException ex) {
+            java.util.logging.Logger.getLogger(DataBaseHandler.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        return TimeIn;
+
+    }
+
+    public String getServerTime() {
+        String TimeIn = "";
+        try {
+
+            connection = getConnection(false);
+            if (null != connection) {
+                ResultSet rs = selectDatabyFields("SELECT NOW() as today");
+                // iterate through the java resultset
+
+                while (rs.next()) {
+                    TimeIn = rs.getString("today");
+                    //System.out.println("TIME IN:" + TimeIn);
+                }
+                st.close();
+                connection.close();
+            }
+        } catch (SQLException ex) {
+            java.util.logging.Logger.getLogger(DataBaseHandler.class.getName()).log(Level.SEVERE, null, ex);
         }
         return TimeIn;
 
@@ -693,6 +721,82 @@ public class DataBaseHandler extends Thread {
             con.close();
         } catch (Exception ex) {
             ex.printStackTrace();
+        }
+    }
+
+    boolean isExitValid(java.util.Date serverTime, String cardFromReader) {
+        //SELECT * FROM main WHERE cardNumber = '" .$ritc. "'
+        java.util.Date NowStamp = serverTime;
+
+        try {
+            String datetimeNextDueStamp = "";
+            connection = getConnection(false);
+            ResultSet rs = selectDatabyFields("SELECT * FROM extcrd.main WHERE cardNumber ='" + cardFromReader + "'");
+
+            if (rs.next()) {
+                datetimeNextDueStamp = rs.getString("datetimeNextDueStamp");
+            }
+            if (datetimeNextDueStamp.compareToIgnoreCase("") != 0) {
+                Long nxtDue = Long.parseLong(datetimeNextDueStamp) * 1000;
+                java.util.Date nxDue = new java.util.Date(nxtDue);
+                log.info("Next Due:" + nxtDue + " Date: " + nxDue);
+                log.info("NowStamp:" + NowStamp.getTime() + " Date: " + NowStamp);
+
+                if (nxtDue > NowStamp.getTime()) {
+                    connection.close();
+                    return true;
+                }
+            }
+            //If Next Due Paid is still greater than now The Parker May Exit
+
+            if (datetimeNextDueStamp.compareToIgnoreCase("") == 0) {
+                String datetimeINStamp = "";
+                connection = getConnection(false);
+                ResultSet EntRS = selectDatabyFields("SELECT datetimeINStamp FROM crdplt.main WHERE cardNumber ='" + cardFromReader + "'");
+
+                if (EntRS.next()) {
+                    datetimeINStamp = EntRS.getString("datetimeINStamp");
+                }
+                log.info("datetimeINStamp:" + datetimeINStamp);
+                Long gracePeriod = 0L;
+                if (datetimeINStamp.compareToIgnoreCase("") != 0) {
+                    gracePeriod = Long.parseLong(datetimeINStamp) * 1000;
+                }
+
+                //If Next Due Paid is still greater than now The Parker May Exit
+                log.info("GracePeriod: " + gracePeriod);
+                log.info("NowStamp   : " + NowStamp.getTime());
+
+                connection.close();
+                if (gracePeriod > NowStamp.getTime()) {
+                    return false;   // RETURN FALSE UNTIL I FINISH CHECKING GRACE TIME
+                }
+            }
+
+        } catch (Exception ex) {
+            return false;
+        }
+        return false;
+    }
+
+    public boolean deleteValidCard(String cardFromReader) {
+        try {
+            connection = getConnection(false);
+            st = (Statement) connection.createStatement();
+            st.execute("DELETE FROM extcrd.main WHERE cardNumber='" + cardFromReader + "'");
+
+            st.close();
+            connection.close();
+
+            connection = getConnection(false);
+            st = (Statement) connection.createStatement();
+            st.execute("DELETE FROM crdplt.main WHERE cardNumber='" + cardFromReader + "'");
+
+            st.close();
+            connection.close();
+            return true;
+        } catch (Exception ex) {
+            return false;
         }
     }
 
@@ -1330,7 +1434,6 @@ public class DataBaseHandler extends Thread {
             }
         });
         try {
-            System.out.println("Trying to access the Cameras...");
             String loginPassword = CONSTANTS.CAMusername + ":" + CONSTANTS.CAMpassword;
             String encoded = new sun.misc.BASE64Encoder().encode(loginPassword.getBytes());
 
@@ -1358,7 +1461,6 @@ public class DataBaseHandler extends Thread {
         }
 
         try {
-            System.out.println("Connecting to Database...");
             connection = getConnection(false);
 
             //String SQL = "UPDATE unidb.timeindb SET Timein = NOW(), Plate = '', PIC = ? , PIC2 = ? WHERE CardCode = ?";
@@ -1400,103 +1502,7 @@ public class DataBaseHandler extends Thread {
             }
             return true;
         } catch (Exception e) {
-            System.out.println("Database Exception Finally: - " + e);
-        }
-        return false;
-    }
-
-    public boolean updateCGHParkerDB(String cardNumber, String entryID) {
-        Connection connection = null;
-        PreparedStatement statement = null;
-        URLConnection uc1 = null;
-        URLConnection uc2 = null;
-        InputStream is1 = null;
-        InputStream is2 = null;
-        javax.net.ssl.HttpsURLConnection.setDefaultHostnameVerifier(
-                new javax.net.ssl.HostnameVerifier() {
-
-            public boolean verify(String hostname,
-                    javax.net.ssl.SSLSession sslSession) {
-                return hostname.equals(CONSTANTS.CAMipaddress1);
-            }
-        });
-        Authenticator.setDefault(new Authenticator() {
-            protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(CONSTANTS.CAMusername, CONSTANTS.CAMpassword.toCharArray());
-            }
-        });
-        try {
-            System.out.println("Trying to access the Cameras...");
-            String loginPassword = CONSTANTS.CAMusername + ":" + CONSTANTS.CAMpassword;
-            String encoded = new sun.misc.BASE64Encoder().encode(loginPassword.getBytes());
-
-            URL url1 = new URL("http://" + CONSTANTS.CAMusername + ":" + CONSTANTS.CAMpassword + "@" + CONSTANTS.CAMipaddress1 + "/onvif-http/snapshot?Profile_1");//HIKVISION IP Cameras
-            URL url2 = new URL("http://" + CONSTANTS.CAMusername + ":" + CONSTANTS.CAMpassword + "@" + CONSTANTS.CAMipaddress2 + "/onvif-http/snapshot?Profile_1");//HIKVISION IP Cameras
-
-            //**********************
-            uc1 = url1.openConnection();
-            uc2 = url2.openConnection();
-            String userpass = CONSTANTS.CAMusername + ":" + CONSTANTS.CAMpassword;
-            //String userpass = "root" + ":" + "Th30r3t1cs";
-            String basicAuth = "Basic " + new String(new sun.misc.BASE64Encoder().encode(userpass.getBytes()));
-            uc1.setRequestProperty("Authorization", basicAuth);
-            uc2.setRequestProperty("Authorization", basicAuth);
-
-            is1 = (InputStream) uc1.getInputStream();
-            is2 = (InputStream) uc2.getInputStream();
-
-        } catch (FileNotFoundException e) {
-            System.out.println("FileNotFoundException: - " + e);
-        } catch (Exception e) {
-            System.out.println("Exception: - " + e);
-        } finally {
-
-        }
-
-        try {
-            System.out.println("Connecting to Database...");
-            connection = getConnection(false);
-
-            String SQL = "UPDATE unidb.timeindb SET Timein = NOW(), Plate = '', PIC = ? , PIC2 = ? WHERE CardCode = ?";
-//            String SQL = "UPDATE crdplt.main SET datetimeIN = NOW(), datetimeINStamp = UNIX_TIMESTAMP(), plateNumber = '', PIC = ? , PIC2 = ? WHERE cardNumber = ?";
-
-            statement = connection.prepareStatement(SQL);
-            if (null != is1 && null != is2) {
-                SQL = "UPDATE unidb.timeindb SET Timein = NOW(), Plate = '', PIC = ? , PIC2 = ? WHERE CardCode = ?";
-                statement = connection.prepareStatement(SQL);
-                statement.setBinaryStream(1, is1, 128 * 1024); //Last Parameter has to be bigger than actual 
-                statement.setBinaryStream(2, is2, 128 * 1024); //Last Parameter has to be bigger than actual 
-                statement.setString(3, cardNumber);
-            }
-            if (null != is1 && null == is2) {
-                SQL = "UPDATE unidb.timeindb SET Timein = NOW(), Plate = '', PIC = ? , PIC2 = NULL WHERE CardCode = ?";
-                statement = connection.prepareStatement(SQL);
-                statement.setBinaryStream(1, is1, 128 * 1024); //Last Parameter has to be bigger than actual 
-                statement.setString(2, cardNumber);
-            }
-            if (null == is1 && null != is2) {
-                SQL = "UPDATE unidb.timeindb SET Timein = NOW(), Plate = '', PIC = NULL , PIC2 = ? WHERE CardCode = ?";
-                statement = connection.prepareStatement(SQL);
-                statement.setBinaryStream(1, is2, 128 * 1024); //Last Parameter has to be bigger than actual 
-                statement.setString(2, cardNumber);
-            }
-            if (null == is1 && null == is2) {
-                SQL = "UPDATE unidb.timeindb SET Timein = NOW(), Plate = '', PIC = NULL , PIC2 = NULL WHERE CardCode = ?";
-                statement = connection.prepareStatement(SQL);
-                statement.setString(1, cardNumber);
-            }
-            statement.executeUpdate();
-            connection.close();
-            statement.close();
-            if (null != is1) {
-                is1.close();
-            }
-            if (null != is2) {
-                is2.close();
-            }
-            return true;
-        } catch (Exception e) {
-            System.out.println("Database Exception Finally: - " + e);
+            System.out.println("Exception Finally: - " + e);
         }
         return false;
     }
@@ -1557,7 +1563,7 @@ public class DataBaseHandler extends Thread {
             //DBH.getEntranceCard();
             boolean test = DBH.testTransactionCGHCard(entranceID, cardTest);
             System.out.println("Testing results=" + test);
-            DBH.getTransactionCGHCard(cardTest);
+            //DBH.getTransactionCGHCard(cardTest);
             //DBH.resetEntryTransactions(entranceID);
             //DBH.showCGHEntries(entranceID);
 

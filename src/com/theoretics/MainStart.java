@@ -17,8 +17,6 @@ import com.pi4j.system.SystemInfo;
 import com.pi4j.wiringpi.Gpio;
 import com.theoretics.Convert;
 import com.theoretics.DateConversionHandler;
-import com.theoretics.NetworkClock;
-import com.theoretics.RaspRC522;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Date;
@@ -32,12 +30,12 @@ import org.apache.logging.log4j.Logger;
 
 public class MainStart {
 
-    String version = "v.1.0.0";
-    String entranceID = "HOME Controller";
+    String version = "v.4.0.1";
+    String entranceID = "Acceptor CARD READER ";
 
     String cardFromReader = "";
 
-    ArrayList<String> cards;
+    //ArrayList<String> cards;
     private static Logger log = LogManager.getLogger(MainStart.class.getName());
     DateConversionHandler dch = new DateConversionHandler();
     private Thread ThrNetworkClock;
@@ -50,6 +48,8 @@ public class MainStart {
     AudioInputStream beepAudioIn = null;
     AudioInputStream takeCardAudioIn = null;
     AudioInputStream bgAudioIn = null;
+    AudioInputStream insufficientaudioIn = null;
+    Clip insufficientclip = null;
     Clip welcomeClip = null;
     Clip pleaseWaitClip = null;
     Clip thankyouClip = null;
@@ -61,22 +61,43 @@ public class MainStart {
     String strUID = "";
     String prevUID = "0";
 
-    final GpioController gpio = GpioFactory.getInstance();    
-    final GpioPinDigitalOutput relayWIFI = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_00, "OPEN", PinState.HIGH);
-    final GpioPinDigitalOutput relayCHARGER = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_01, "CLOSE", PinState.HIGH);
+    final GpioController gpio = GpioFactory.getInstance();
+
+    // provision gpio pin #01 as an output pin and turn on
+    final GpioPinDigitalOutput led1 = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_20, "HDDLED", PinState.LOW);
+    final GpioPinDigitalOutput led2 = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_21, "POWERLED", PinState.LOW);
+    final GpioPinDigitalInput btnPower = gpio.provisionDigitalInputPin(RaspiPin.GPIO_11, PinPullResistance.PULL_UP);
+    final GpioPinDigitalInput btnReset = gpio.provisionDigitalInputPin(RaspiPin.GPIO_12, PinPullResistance.PULL_UP);
+
+    
+    final GpioPinDigitalOutput relayBarrier = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_08, "BARRIER", PinState.HIGH);
+    final GpioPinDigitalOutput relayLights = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_09, "LIGHTS", PinState.HIGH);
+    final GpioPinDigitalOutput relayFan = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_30, "FAN", PinState.HIGH);
+
+    
+    final GpioPinDigitalInput busy = gpio.provisionDigitalInputPin(RaspiPin.GPIO_22, PinPullResistance.PULL_DOWN);
+    final GpioPinDigitalInput rejected = gpio.provisionDigitalInputPin(RaspiPin.GPIO_23, PinPullResistance.PULL_DOWN);
+    final GpioPinDigitalInput received = gpio.provisionDigitalInputPin(RaspiPin.GPIO_24, PinPullResistance.PULL_DOWN);
+    final GpioPinDigitalInput receivedDN = gpio.provisionDigitalInputPin(RaspiPin.GPIO_25, PinPullResistance.PULL_DOWN);
+
+    final GpioPinDigitalInput carDetected = gpio.provisionDigitalInputPin(RaspiPin.GPIO_29, PinPullResistance.PULL_UP);
+
+    final GpioPinDigitalOutput transistorAccept = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_28, "ACCEPT", PinState.HIGH);
+    final GpioPinDigitalOutput transistorReject = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_27, "REJECT", PinState.HIGH);
 
     public void startProgram() {
         System.out.println(entranceID + " Tap Card Listener " + version);
+//        System.out.println(entranceID + " Tap Card Listener " + version);
 
         try {
-            welcomeAudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/takecard.wav"));
+            welcomeAudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/pleasecomeagain.wav"));
             welcomeClip = AudioSystem.getClip();
             welcomeClip.open(welcomeAudioIn);
         } catch (Exception ex) {
             notifyError(ex);
         }
         try {
-            pleasewaitAudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/plswait.wav"));
+            pleasewaitAudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/plswaitGB.wav"));
             pleaseWaitClip = AudioSystem.getClip();
             pleaseWaitClip.open(pleasewaitAudioIn);
         } catch (Exception ex) {
@@ -103,20 +124,27 @@ public class MainStart {
         } catch (Exception ex) {
             System.out.println(ex.getMessage());
         }
-        try {
-            errorAudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/beep.wav"));
-            errorClip = AudioSystem.getClip();
-            errorClip.open(errorAudioIn);
-        } catch (Exception ex) {
-            notifyError(ex);
-        }
+//        try {
+//            errorAudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/beep.wav"));
+//            errorClip = AudioSystem.getClip();
+//            errorClip.open(errorAudioIn);
+//        } catch (Exception ex) {
+//            notifyError(ex);
+//        }
 
+//        try {
+//            bgAudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/bgmusic.wav"));
+//            bgClip = AudioSystem.getClip();
+//            bgClip.open(bgAudioIn);
+//        } catch (Exception ex) {
+//            notifyError(ex);
+//        }
         try {
-            bgAudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/bgmusic.wav"));
-            bgClip = AudioSystem.getClip();
-            bgClip.open(bgAudioIn);
+            insufficientaudioIn = AudioSystem.getAudioInputStream(MainStart.class.getResource("/sounds/pleasepay.wav"));
+            insufficientclip = AudioSystem.getClip();
+            insufficientclip.open(insufficientaudioIn);
         } catch (Exception ex) {
-            notifyError(ex);
+            log.error(ex.getMessage());
         }
 
         try {
@@ -130,41 +158,228 @@ public class MainStart {
         }
 
 //        this.cards = new ArrayList<String>();
-        
-        //RaspRC522 rc522 = new RaspRC522();
-        int back_bits[] = new int[1];
+        DataBaseHandler dbh = new DataBaseHandler(CONSTANTS.serverIP);
 
-        byte tagid[] = new byte[5];
-        int i, status;
-        byte blockaddress = 8;  //读写块地址0-63
-        byte sector = 15, block = 2;
+        Scanner scan = new Scanner(System.in);
 
-        //CONSTANTS.updateData();
-        
-        //NetworkClock nc = new NetworkClock(this.cards);
-        //ThrNetworkClock = new Thread(nc);
-        //ThrNetworkClock.start();
-
+        String text = null;
+        String cardUID = null;
         System.out.println("Reader Ready!");
-        
-//        //Testing Dispenser
-//        transistorDispense.pulse(1000, true);
-//        Gpio.delay(2000);
-//        transistorReject.pulse(1000, true);
 
-        //Testing Relays
-            relayWIFI.setState(false);
-            Gpio.delay(2000);
-//            relayWIFI.setState(true);
-//            Gpio.delay(12000);
-            relayCHARGER.setState(false);
-//            Gpio.delay(2000);
-//            relayCHARGER.setState(true);
-            System.out.println("relays Tested!");
-        while(true) {
-            
-        }
+        transistorAccept.high();
+//        transistorReject.high();
+        Gpio.delay(1000);
+        transistorAccept.low();
+//        transistorReject.low();
+        Gpio.delay(1000);
+        transistorReject.high();
+//        transistorReject.low();
+        Gpio.delay(1000);
+        transistorReject.low();
+//        transistorReject.low();
+
+//        transistorReject.pulse(300, true);
+        System.out.println("Transistors Tested!");
+        Gpio.delay(1000);
         
+//        transistorDispense.pulse(3000, true);
+//        Gpio.delay(3000);
+//        transistorReject.pulse(3000, true);
+
+        relayBarrier.low();//ON    
+        Gpio.delay(500);
+        relayBarrier.high(); //OFF
+        System.out.println("Relays Tested!");
+
+
+//Testing Remotely
+//        cards.add("ABC1234");
+
+        while (true) {
+            System.out.print("!");
+            strUID = "";
+            text = scan.nextLine();
+            if (null != text) {
+                try {
+                    System.out.println("RAW: " + text);
+                    cardUID = Long.toHexString(Long.parseLong(text));
+                    if (text.startsWith("0")) {
+                        cardUID = "0" + cardUID;
+                    } else if (text.startsWith("00")) {
+                        cardUID = "00" + cardUID;
+                    } else if (text.startsWith("000")) {
+                        cardUID = "000" + cardUID;
+                    } else if (text.startsWith("0000")) {
+                        cardUID = "0000" + cardUID;
+                    }
+                    //cardUID = Integer.toHexString(Integer.parseInt(text));
+                    cardUID = cardUID.toUpperCase();
+                    strUID = cardUID.substring(6, 8) + cardUID.substring(4, 6) + cardUID.substring(2, 4) + cardUID.substring(0, 2);
+                    //FOR TESTING ONLY
+//                    Gpio.delay(1300);
+//                    transistorAccept.low();
+//                    Gpio.delay(1300);
+//                    transistorAccept.high();
+//                    Gpio.delay(1300);
+//                    transistorAccept.low();
+                    System.out.println("UID: " + cardUID.substring(6, 8) + cardUID.substring(4, 6) + cardUID.substring(2, 4) + cardUID.substring(0, 2));
+                } catch (Exception ex) {
+                    System.err.println("Card Conversion: " + ex);
+                }
+                //System.out.println("" + stats);
+//                strUID = Convert.bytesToHex(tagid);
+                try {
+                    if (prevUID.compareToIgnoreCase(strUID) != 0) {
+                        try {
+                            if (pleaseWaitClip.isActive() == false) {
+                                //haltButton = false;
+                                pleaseWaitClip.setFramePosition(0);
+                                pleaseWaitClip.start();
+                            }
+
+                        } catch (Exception ex) {
+                            ex.printStackTrace();
+                        }
+                        //Uncomment Below to disable Read same Card
+//                    prevUID = strUID;
+                        System.out.println("Card Read UID:" + strUID.substring(0, 8));
+                        cardFromReader = strUID.substring(0, 8).toUpperCase();
+//                        
+                        if (cardFromReader.compareToIgnoreCase("") != 0) {
+//                            cards.add(cardFromReader);
+                            boolean isValid = false;
+                            boolean isUpdated = false;
+                            Date serverTime = dbh.getServerDateTime();
+                            System.out.println("Time On Card*" + cardFromReader + "* :: " + serverTime);
+//                            boolean alreadyExists = dbh.findCGHCard(cardFromReader);                        
+                            try {
+                                //isValid = dbh.writeManualEntrance(exitID, cardFromReader, "R", d2, timeStampIN, startCapture);
+                                isValid = dbh.isExitValid(serverTime, cardFromReader);
+
+                                //isValid = true;
+                            } catch (Exception ex) {
+                                ex.printStackTrace();
+                            }
+
+                            if (isValid) {
+                                System.out.print("Sent Success");
+                                transistorAccept.setState(PinState.LOW);
+                                Gpio.delay(300);
+                                transistorAccept.setState(PinState.HIGH);
+//                                try {
+//                                    Thread.sleep(3000);
+//                                } catch (InterruptedException ex) {
+//                                    java.util.logging.Logger.getLogger(MainStart.class.getName()).log(Level.SEVERE, null, ex);
+//                                }
+//                                Gpio.delay(300);
+//                                transistorAccept.setState(PinState.HIGH);
+                                Gpio.delay(700);
+                                transistorAccept.setState(PinState.LOW);
+                                try {
+                                    relayBarrier.setState(PinState.LOW);
+                                    Gpio.delay(300);
+                                    relayBarrier.setState(PinState.HIGH);
+                                    dbh.deleteValidCard(cardFromReader);
+                                    try {
+                                        if (thankyouClip.isActive() == false) {
+                                            //haltButton = false;
+                                            thankyouClip.setFramePosition(0);
+                                            thankyouClip.start();
+                                        }
+
+                                    } catch (Exception ex) {
+                                        ex.printStackTrace();
+                                    }
+                                    Gpio.delay(300);
+
+                                } catch (Exception ex) {
+                                    java.util.logging.Logger.getLogger(MainStart.class.getName()).log(Level.SEVERE, null, ex);
+                                }
+                            } else {
+                                System.out.print("Sent InValid");
+                                transistorReject.setState(PinState.LOW);
+                                Gpio.delay(300);
+                                transistorReject.setState(PinState.HIGH);
+                                Gpio.delay(700);
+//                                Gpio.delay(300);                                
+//                                transistorReject.setState(PinState.HIGH);
+                                Gpio.delay(300);
+                                transistorReject.setState(PinState.LOW);
+
+                                try {
+                                    if (insufficientclip.isActive() == false) {
+                                        //haltButton = false;
+                                        insufficientclip.setFramePosition(0);
+                                        insufficientclip.start();
+                                    }
+
+                                } catch (Exception ex) {
+                                    ex.printStackTrace();
+                                }
+                            }
+
+                        }
+
+                        //led1.pulse(1250, true);
+//                    System.out.println("LED Open!");
+                        //led2.pulse(1250, true);
+                        // turn on gpio pin1 #01 for 1 second and then off
+                        //System.out.println("--> GPIO state should be: ON for only 3 second");
+                        // set second argument to 'true' use a blocking call
+//                    c.showWelcome(700, false);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+//            strUID = null;
+//
+                Date now = new Date();
+//            transistorDispense.pulse(300, true);
+//        transistorReject.pulse(300, true);
+//        System.out.println("Test Dispense");
+                //System.out.println("Hour :  " + now.getHours());
+                if (now.getHours() >= 18) {
+                    //relayLights.low();
+                }
+                try {
+                    if (SystemInfo.getCpuTemperature() >= 65) {
+                        System.out.println("CPU Temperature   :  " + SystemInfo.getCpuTemperature());
+//                    relayFan.low();
+//                    relayBarrier.low();
+//                    transistorDispense.pulse(300, true);
+                    } else {
+//                    relayFan.high();
+//                    relayBarrier.high();
+                    }
+                } catch (Exception ex) {
+                }
+
+//            if (null != strUID) {
+//                if (strUID.compareTo("") == 0) {
+//                    transistorDispense.pulse(300, true);
+//                }
+//            } else {
+//                transistorDispense.pulse(300, true);
+//            }
+                if (led1.isLow()) {
+                    led1.high();
+                }
+                if (led2.isLow()) {
+                    led2.high();
+                }
+
+                try {
+//                Thread.sleep(300);
+//                rc522 = null;
+//                Thread.sleep(3300);
+//                Thread.yield();
+                } catch (Exception ex) {
+                    System.out.println(ex.getMessage());
+                }
+            }
+
+        }
+
     }
 
     private void notifyError(Exception ex) {
@@ -296,79 +511,170 @@ public class MainStart {
             return;
         }
 
-        relayWIFI.high();
-        relayCHARGER.high();
+        led1.setShutdownOptions(true, PinState.LOW);
+        led2.setShutdownOptions(true, PinState.LOW);
 
-        relayWIFI.setMode(PinMode.DIGITAL_OUTPUT);
-        
+        relayFan.high();
+        relayBarrier.high();
+        relayLights.high();
 
-    }
+        transistorReject.setShutdownOptions(true, PinState.LOW);
+        transistorAccept.setShutdownOptions(true, PinState.LOW);
 
-    public static void rfidReaderLoop(int sleeptime) throws InterruptedException {
-        int count = 0;
-        while (count++ < 3) {
+        transistorReject.setShutdownOptions(true);
+        transistorAccept.setShutdownOptions(true);
 
-            int packetlength = 5;
+        rejected.setMode(PinMode.DIGITAL_INPUT);
+        rejected.setPullResistance(PinPullResistance.PULL_UP);
+        busy.setMode(PinMode.DIGITAL_INPUT);
+        busy.setPullResistance(PinPullResistance.PULL_UP);
+        received.setMode(PinMode.DIGITAL_INPUT);
+        received.setPullResistance(PinPullResistance.PULL_UP);
+        receivedDN.setMode(PinMode.DIGITAL_INPUT);
+        receivedDN.setPullResistance(PinPullResistance.PULL_UP);
 
-            byte packet[] = new byte[packetlength];
-            packet[0] = (byte) 0x80; // FIRST PACKET GETS IGNORED BUT HAS
-            // TO BE SET TO READ
-            packet[1] = (byte) 0x80; // ADDRESS 0 Gives data of Address 0
-            packet[2] = (byte) 0x82; // ADDRESS 1 Gives data of Address 1
-            packet[3] = (byte) 0x84; // ADDRESS 2 Gives data of Address 2
-            packet[4] = (byte) 0x86; // ADDRESS 3 Gives data of Address 3
+        //carDetected.setMode(PinMode.DIGITAL_INPUT);
+        //carDetected.setPullResistance(PinPullResistance.PULL_UP);
+        btnPower.setMode(PinMode.DIGITAL_INPUT);
+        btnPower.setPullResistance(PinPullResistance.PULL_UP);
+        btnReset.setMode(PinMode.DIGITAL_INPUT);
+        btnReset.setPullResistance(PinPullResistance.PULL_UP);
 
-            System.out.println("-----------------------------------------------");
-            System.out.println("Data to be transmitted:");
-            System.out.println("[TX] " + bytesToHex(packet));
-            System.out.println("[TX1] " + packet[1]);
-            System.out.println("[TX2] " + packet[2]);
-            System.out.println("[TX3] " + packet[3]);
-            System.out.println("[TX4] " + packet[4]);
-            System.out.println("Transmitting data...");
+        relayBarrier.setShutdownOptions(true, PinState.LOW);
+//        relayFan.setShutdownOptions(true, PinState.LOW);
+//        relayLights.setShutdownOptions(true, PinState.LOW);
+//        btnDispense.setMode(PinMode.DIGITAL_INPUT);
+//        btnDispense.setPullResistance(PinPullResistance.PULL_UP);
+//
+//        // set shutdown state for this input pin
+//        btnDispense.setShutdownOptions(true);
+        btnPower.setShutdownOptions(true);
+        btnReset.setShutdownOptions(true);
 
-            // Send data to Reader and receive answerpacket.
-            packet = readFromRFID(0, packet, packetlength);
+        rejected.setShutdownOptions(true);
+        busy.setShutdownOptions(true);
+        received.setShutdownOptions(true);
+        receivedDN.setShutdownOptions(true);
+        //carDetected.setShutdownOptions(true);
+        btnReset.setShutdownOptions(true);
+        led1.high(); //Show POWER is ON led1.high
+        led2.blink(300, 3000);
 
-            System.out.println("Data transmitted, packets received.");
-            System.out.println("Received Packets (First packet to be ignored!)");
-            System.out.println("[RX] " + bytesToHex(packet));
-            System.out.println("[RX1] " + packet[1]);
-            System.out.println("[RX2] " + packet[2]);
-            System.out.println("[RX3] " + packet[3]);
-            System.out.println("[RX4] " + packet[4]);
-            System.out.println("-----------------------------------------------");
+        transistorAccept.low();
+        transistorReject.low();
 
-            if (packet.length == 0) {
-                //Reset when no packet received
-                //ResetPin.high();
-                Thread.sleep(50);
-                //ResetPin.low();
+        btnPower.addListener(new GpioPinListenerDigital() {
+            @Override
+            public void handleGpioPinDigitalStateChangeEvent(GpioPinDigitalStateChangeEvent event) {
+                // display pin state on console
+                System.out.println("POWER LED Pressed!");
+                led1.pulse(5000);
+                System.out.println(" --> GPIO PIN STATE CHANGE: " + event.getPin() + " = " + event.getState());
+                try {
+                    Runtime r = Runtime.getRuntime();
+                    Process p = r.exec("sudo reboot now");//u - update f - force
+                    Thread.sleep(30000);
+
+                } catch (Exception ex) {
+                    System.out.println(ex.getMessage());
+                }
             }
 
-            // Wait 1/2 second before trying to read again
-            Thread.sleep(sleeptime);
-        }
+        });
 
-    }
+        // create and register gpio pin listener
+        btnReset.addListener(new GpioPinListenerDigital() {
+            @Override
+            public void handleGpioPinDigitalStateChangeEvent(GpioPinDigitalStateChangeEvent event) {
+                // display pin state on console
+                System.out.println("RESET LED!");
+                led1.pulse(5000);
+                System.out.println(" --> GPIO PIN STATE CHANGE: " + event.getPin() + " = " + event.getState());
+                try {
+                    Runtime r = Runtime.getRuntime();
+                    Process p = r.exec("sudo shutdown now");//u - update f - force
+                    Thread.sleep(30000);
 
-    public static byte[] readFromRFID(int channel, byte[] packet, int length) {
-        Spi.wiringPiSPIDataRW(channel, packet, length);
+                } catch (Exception ex) {
+                    System.out.println(ex.getMessage());
+                }
+            }
 
-        return packet;
-    }
+        });
 
-    public static boolean writeToRFID(int channel, byte fullAddress, byte data) {
+        busy.addListener(new GpioPinListenerDigital() {
+            @Override
+            public void handleGpioPinDigitalStateChangeEvent(GpioPinDigitalStateChangeEvent event) {
+                // display pin state on console
+                if (event.getState() == PinState.LOW) {
+                    System.out.println("IS ON THE MOUTH");
+                }
+                System.out.println(" --> GPIO PIN STATE CHANGE: " + event.getPin() + " = " + event.getState());
+            }
 
-        byte[] packet = new byte[2];
-        packet[0] = fullAddress;
-        packet[1] = data;
+        });
 
-        if (Spi.wiringPiSPIDataRW(channel, packet, 1) >= 0) {
-            return true;
-        } else {
-            return false;
-        }
+        rejected.addListener(new GpioPinListenerDigital() {
+            @Override
+            public void handleGpioPinDigitalStateChangeEvent(GpioPinDigitalStateChangeEvent event) {
+                // display pin state on console
+                if (event.getState() == PinState.LOW) {
+                    System.out.println("CARD is REJECTED");
+                    //LOW = REJECTED AND ON THE MOUTH
+                    //HIGH = REJECTED AND TAKEN BY PARKER
+                } else if (event.getState() == PinState.HIGH) {
+                    System.out.println("REJECTED AND PRESENTED TO PARKER");
+                }
+                //System.out.println(" --> GPIO PIN STATE CHANGE: " + event.getPin() + " = " + event.getState());                
+            }
+
+        });
+
+        received.addListener(new GpioPinListenerDigital() {
+            @Override
+            public void handleGpioPinDigitalStateChangeEvent(GpioPinDigitalStateChangeEvent event) {
+                // display pin state on console
+                if (event.getState() == PinState.LOW) {
+                    System.out.println("CARD is RECEIVED");
+//                     relayBarrier.low();//ON    
+//                     Gpio.delay(1000);
+//                     relayBarrier.high(); //OFF
+                    //LOW = RECEIVED AND READY FOR CARD SCANNER
+                    //HIGH = RECEIVED AND LEFT THE SCANNING AREA
+                    
+                } else if (event.getState() == PinState.HIGH) {
+                    System.out.println("RECEIVED AND LEFT THE SCANNING AREA");
+                }
+
+                //System.out.println(" --> GPIO PIN STATE CHANGE: " + event.getPin() + " = " + event.getState());                
+            }
+
+        });
+
+        receivedDN.addListener(new GpioPinListenerDigital() {
+            @Override
+            public void handleGpioPinDigitalStateChangeEvent(GpioPinDigitalStateChangeEvent event) {
+                // display pin state on console
+                if (event.getState() == PinState.LOW) {
+                    System.out.println("CARD IS RECEIVED DOWN");
+                }
+                System.out.println(" --> GPIO PIN STATE CHANGE: " + event.getPin() + " = " + event.getState());
+            }
+
+        });
+
+        carDetected.addListener(new GpioPinListenerDigital() {
+            @Override
+            public void handleGpioPinDigitalStateChangeEvent(GpioPinDigitalStateChangeEvent event) {
+                // display pin state on console
+                if (event.getState() == PinState.LOW) {
+                    System.out.println("CAR is now Present");
+                }
+                System.out.println(" --> GPIO PIN STATE CHANGE: " + event.getPin() + " = " + event.getState());
+            }
+
+        });
+
     }
 
     public static String bytesToHex(byte[] bytes) {
